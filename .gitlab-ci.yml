@@ -3,29 +3,39 @@
 #
 
 variables:
-  JAVA_BUILDER_IMAGE: nextcode/builderimg-java:openjdk8
+  JAVA_BUILDER_IMAGE: nextcode/builderimg-java:openjdk11
   GIT_SUBMODULE_STRATEGY: none
   GRADLE_USER_HOME: "$CI_PROJECT_DIR/.gradle"
   GRADLE_OPTS: "-Dorg.gradle.daemon=false -Dorg.gradle.caching=true"
   RELEASABLE_BRANCH: master                                         # Optional (master is the default).  If this matches the current branch, the built image will be releasable with a semver tag.
 
+  # Vars for build resources
+  KUBERNETES_CPU_REQUEST: 4
+  KUBERNETES_CPU_LIMIT: 6
+  KUBERNETES_MEMORY_REQUEST: 2Gi
+  KUBERNETES_MEMORY_LIMIT: 4Gi
+
+.on-branches:
+  rules:
+    - if: '$CI_COMMIT_BRANCH'
 
 .on-releasable-branch-only:
-  only:
-    variables:
-      - $CI_COMMIT_REF_NAME == $RELEASABLE_BRANCH
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $RELEASABLE_BRANCH
 
 .on-releasable-or-release-branch-only:
-  only:
-    variables:
-      - $CI_COMMIT_REF_NAME == $RELEASABLE_BRANCH
-      - $CI_COMMIT_REF_NAME =~ /^release\/v(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $RELEASABLE_BRANCH
+    - if: $CI_COMMIT_REF_NAME =~ /^release\/v(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 
 .on-releasable-or-semver-tag-only:
-  only:
-    variables:
-      - $CI_COMMIT_REF_NAME == $RELEASABLE_BRANCH
-      - $CI_COMMIT_TAG =~ /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-([1-9]\d*|[\da-z-]*[a-z-][\da-z-]*)(\.([1-9]\d*|[\da-z-]*[a-z-][\da-z-]*))*)?(\+[\da-z-]+(\.[\da-z-]+)*)?$/
+  rules:
+    - if: $CI_COMMIT_REF_NAME == $RELEASABLE_BRANCH
+    - if: $CI_COMMIT_TAG =~ /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-([1-9]\d*|[\da-z-]*[a-z-][\da-z-]*)(\.([1-9]\d*|[\da-z-]*[a-z-][\da-z-]*))*)?(\+[\da-z-]+(\.[\da-z-]+)*)?$/
+
+.on-semver-tag-only:
+  rules:
+    - if: $CI_COMMIT_TAG =~ /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-([1-9]\d*|[\da-z-]*[a-z-][\da-z-]*)(\.([1-9]\d*|[\da-z-]*[a-z-][\da-z-]*))*)?(\+[\da-z-]+(\.[\da-z-]+)*)?$/
 
 
 stages:
@@ -39,25 +49,11 @@ before_script:
   - export GRADLE_USER_HOME=`pwd`/.gradle
 
 
-build:
-  stage: build
+.build_with_cache:
+  extends: .on-branches
   image: "$JAVA_BUILDER_IMAGE"
-  script: ./gradlew assemble
   tags:
-    - iceland
-  only:
-    - branches
-  cache:
-    key: "$CI_COMMIT_REF_NAME"
-    policy: pull-push
-    paths:
-      - "build"
-      - "**/build"
-      - ".gradle"
-
-
-.build_cache:
-  extends: build
+    - gitlab-build-01
   cache:
     key: "$CI_COMMIT_REF_NAME"
     policy: pull
@@ -66,9 +62,16 @@ build:
       - "**/build"
       - ".gradle"
 
+build:
+  extends: .build_with_cache
+  stage: build
+  script: ./gradlew classes
+  cache:
+    policy: pull-push
+
 
 .test:
-  extends: .build_cache
+  extends: .build_with_cache
   stage: test
   variables:
     GIT_SUBMODULE_STRATEGY: recursive
@@ -101,9 +104,8 @@ code_quality:
   extends:
     - .on-releasable-or-release-branch-only
   stage: test
-  # Code quality fails on the iceland runners!
-  #tags:       
-  #  - iceland
+  tags:
+    - gitlab-build-01
   artifacts:
     reports:
       codequality: gl-code-quality-report.json
@@ -111,9 +113,9 @@ code_quality:
     expire_in: 1 week
 
 
-license_management:
+license_scanning:
   extends:
-    - .build_cache
+    - .build_with_cache
     - .on-releasable-or-release-branch-only
   stage: test
   variables:
@@ -126,8 +128,9 @@ license_management:
 dependency_scanning:
   stage: test
   tags:
-    - iceland
+    - gitlab-build-01
   variables:
+    DS_DEFAULT_ANALYZERS: "gemnasium-maven"
     # There is no need to run tests or generate sphinx documentation for license management
     # analysis, however, the license management plugin calls the build task so we have to manually
     # disable tests and documentation generation.
@@ -138,21 +141,21 @@ dependency_scanning:
 
 publish:
   extends:
-    - .build_cache
+    - .build_with_cache
     - .on-releasable-or-semver-tag-only
   stage: publish
   script: ./gradlew publish -x test -x slowTest -x integrationTest
 
-
-gor-services:
-  extends: .on-releasable-branch-only
-  stage: trigger-cross-projects
-  trigger:
-    project:  wuxi-nextcode/wxnc-gor/gor-services
-    branch:   develop
+# TODO:  The trigger starts the gor-services with wrong variables.  Needs some tuning.
+#gor-services:
+#  extends: .on-releasable-branch-only
+#  stage: trigger-cross-projects
+#  trigger:
+#    project:  wuxi-nextcode/wxnc-gor/gor-services
+#    branch:   develop
 
 
 include:
-  - template: Jobs/Code-Quality.gitlab-ci.yml
-  - template: Security/License-Management.gitlab-ci.yml
-  - template: Security/Dependency-Scanning.gitlab-ci.yml
+  - template: Code-Quality.gitlab-ci.yml
+  - template: License-Scanning.gitlab-ci.yml
+  - template: Dependency-Scanning.gitlab-ci.yml

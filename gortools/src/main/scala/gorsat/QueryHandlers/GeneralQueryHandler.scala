@@ -22,24 +22,24 @@
 
 package gorsat.QueryHandlers
 
+import gorsat.Analysis.CheckOrder
+
 import java.io.File
 import java.lang
 import java.nio.file.{Files, Paths}
-
-import org.gorpipe.exceptions.{GorException, GorSystemException}
-import org.gorpipe.model.genome.files.gor.GorParallelQueryHandler
-import gorsat.AnalysisUtilities
-import gorsat.AnalysisUtilities.writeList
-import gorsat.Commands.CommandParseUtilities
+import gorsat.Utilities.AnalysisUtilities.writeList
+import gorsat.Commands.{CommandParseUtilities, Processor}
 import gorsat.DynIterator.DynamicRowSource
 import gorsat.Outputs.OutFile
 import gorsat.QueryHandlers.GeneralQueryHandler.{findCacheFile, findOverheadTime, runCommand}
+import gorsat.Utilities.AnalysisUtilities
 import gorsat.process.ParallelExecutor
 import org.gorpipe.client.FileCache
 import org.gorpipe.exceptions.{GorException, GorSystemException, GorUserException}
-import org.gorpipe.gor.GorContext
-import org.gorpipe.model.genome.files.binsearch.GorIndexType
-import org.gorpipe.model.genome.files.gor.{GorMonitor, GorParallelQueryHandler}
+import org.gorpipe.gor.binsearch.GorIndexType
+import org.gorpipe.gor.model.GorParallelQueryHandler
+import org.gorpipe.gor.monitor.GorMonitor
+import org.gorpipe.gor.session.GorContext
 import org.slf4j.LoggerFactory
 
 
@@ -160,13 +160,15 @@ object GeneralQueryHandler {
       // TODO: Get a gor config instance somehow into gorpipeSession or gorContext?
       if (useMd5) {
         val runner = context.getSession.getSystemContext.getRunnerFactory.create()
-        runner.run(theSource, OutFile(temp_cacheFile, theHeader, skipHeader = false, columnCompress = false, nor = nor, useMd5, GorIndexType.NONE))
+        val out = OutFile(temp_cacheFile, theHeader, skipHeader = false, columnCompress = false, nor = nor, true, useMd5, GorIndexType.NONE)
+        val ps: Processor = if(nor) out else CheckOrder() | out
+        runner.run(theSource, ps)
         oldName = new java.io.File(temp_cacheFile)
         val md5File = Paths.get(temp_cacheFile + ".md5")
         if (Files.exists(md5File)) {
           val md5SumLines = Files.readAllLines(md5File)
 
-          if (md5SumLines.size() > 0 && md5SumLines.get(0).length > 0) {
+          if (md5SumLines.size() > 0 && md5SumLines.get(0).nonEmpty) {
             val extension = outfile.slice(outfile.lastIndexOfSlice("."), outfile.length)
             newName = md5File.getParent.resolve(md5SumLines.get(0) + extension).toFile
             try {
@@ -186,7 +188,9 @@ object GeneralQueryHandler {
         }
       } else {
         val runner = context.getSession.getSystemContext.getRunnerFactory.create()
-        runner.run(theSource, OutFile(temp_cacheFile, theHeader, skipHeader = false, nor = nor))
+        val out = OutFile(temp_cacheFile, theHeader, skipHeader = false, nor = nor)
+        val ps: Processor = if(nor) out else CheckOrder() | out
+        runner.run(theSource, ps)
         newName = new java.io.File(outfile)
         oldName = new java.io.File(temp_cacheFile)
       }
@@ -201,6 +205,8 @@ object GeneralQueryHandler {
           case _: Exception => /* do nothing */
         }
         throw e
+    } finally {
+      theSource.close()
     }
   }
 

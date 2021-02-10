@@ -22,35 +22,36 @@
 
 package org.gorpipe.gor.driver.providers.stream.datatypes.parquet;
 
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.example.data.Group;
 import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.filter2.predicate.FilterApi;
 import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.filter2.predicate.Operators;
+import org.apache.parquet.hadoop.ParquetFileReader;
+import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.hadoop.api.ReadSupport;
+import org.apache.parquet.hadoop.example.GroupReadSupport;
+import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.io.InputFile;
 import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
-import org.gorpipe.gor.GorSession;
-import org.gorpipe.model.genome.files.gor.GenomicIterator;
-import org.gorpipe.model.genome.files.gor.Line;
-import org.gorpipe.model.genome.files.gor.Row;
+import org.apache.parquet.schema.Type;
 import org.gorpipe.exceptions.GorSystemException;
+import org.gorpipe.gor.session.GorSession;
 import org.gorpipe.gor.driver.meta.SourceReference;
 import org.gorpipe.gor.driver.providers.stream.StreamSourceFile;
 import org.gorpipe.gor.driver.providers.stream.sources.StreamSource;
 import org.gorpipe.gor.driver.providers.stream.sources.file.FileSource;
 import org.gorpipe.gor.driver.providers.stream.sources.wrappers.RetryWrapper;
+import org.gorpipe.gor.model.GenomicIterator;
+import org.gorpipe.gor.model.Line;
+import org.gorpipe.gor.model.Row;
 import org.gorpipe.model.gor.RowObj;
-import org.gorpipe.util.gorutil.standalone.GorStandalone;
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.Path;
-import org.apache.parquet.example.data.Group;
-import org.apache.parquet.hadoop.ParquetFileReader;
-import org.apache.parquet.hadoop.ParquetReader;
-import org.apache.parquet.hadoop.example.GroupReadSupport;
-import org.apache.parquet.hadoop.metadata.ParquetMetadata;
-import org.apache.parquet.hadoop.util.HadoopInputFile;
-import org.apache.parquet.io.InputFile;
-import org.apache.parquet.schema.MessageType;
-import org.apache.parquet.schema.Type;
+import org.gorpipe.util.standalone.GorStandalone;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -62,15 +63,15 @@ import java.util.stream.Stream;
 
 
 public class ParquetFileIterator extends GenomicIterator {
-    private PriorityQueue<ParquetRowReader> mergeParquet = new PriorityQueue<>();
+    private final PriorityQueue<ParquetRowReader> mergeParquet = new PriorityQueue<>();
     private List<Path> parquetPaths = new ArrayList<>();
     private List<Path> parquetPathsForSeek = new ArrayList<>();
-    private GenomicIterator.ChromoLookup lookup;
+    private final GenomicIterator.ChromoLookup lookup;
     private boolean nor = false;
     private java.nio.file.Path resultPath;
     private int[] sortCols;
-    private Configuration configuration = new Configuration(true);
-    private GroupReadSupport readSupport = new GroupReadSupport();
+    private final Configuration configuration = new Configuration(true);
+    private final GroupReadSupport readSupport = new GroupReadSupport();
     private MessageType schema;
     private FilterPredicate filterPredicate;
     private FilterPredicate seekfilterPredicate;
@@ -109,8 +110,10 @@ public class ParquetFileIterator extends GenomicIterator {
 
     @Override
     public void init(GorSession gorSession) {
-        nor = gorSession.getNorContext();
-        gorSession.getGorContext().getSortCols().ifPresent(c -> this.sortCols = Arrays.stream(c.split(",")).mapToInt(Integer::parseInt).toArray());
+        if (gorSession != null) {
+            nor = gorSession.getNorContext();
+            gorSession.getGorContext().getSortCols().ifPresent(c -> this.sortCols = Arrays.stream(c.split(",")).mapToInt(Integer::parseInt).toArray());
+        }
         init();
     }
 
@@ -129,9 +132,11 @@ public class ParquetFileIterator extends GenomicIterator {
 
     private String[] extractPartCol(String parquetPath) {
         java.nio.file.Path parentParquetPath = Paths.get(parquetPath).getParent();
-        String parentFolder = parentParquetPath.getFileName().toString();
-        String[] parentSplit = parentFolder.split("=");
-        if (parentSplit.length == 2) return parentSplit;
+        if(parentParquetPath!=null) {
+            String parentFolder = parentParquetPath.getFileName().toString();
+            String[] parentSplit = parentFolder.split("=");
+            if (parentSplit.length == 2) return parentSplit;
+        }
         return null;
     }
 
@@ -240,6 +245,7 @@ public class ParquetFileIterator extends GenomicIterator {
                 setHeader(newHeader);
             }
         }
+        if(nor) setHeader("ChromNOR\tPosNOR\t"+super.getHeader());
     }
 
     private String getTypeName(Type type) {
@@ -429,5 +435,21 @@ public class ParquetFileIterator extends GenomicIterator {
             }
         }
         return false;
+    }
+
+    @Override
+    public GenomicIterator select(int[] cols) {
+        final StringBuilder sb = new StringBuilder();
+        sb.append("message gortable {\n");
+        final List<Type> fields = this.schema.getFields();
+        for (final int colIdx : cols) {
+            sb.append(fields.get(colIdx));
+            sb.append(";\n");
+        }
+        sb.append("}");
+        final String readSchema = sb.toString();
+        this.configuration.set(ReadSupport.PARQUET_READ_SCHEMA, readSchema);
+        this.selectHeader(cols);
+        return this;
     }
 }

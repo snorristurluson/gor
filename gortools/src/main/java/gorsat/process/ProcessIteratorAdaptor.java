@@ -22,15 +22,15 @@
 
 package gorsat.process;
 
+import gorsat.Commands.Analysis;
+import gorsat.Commands.CommandParseUtilities;
 import org.gorpipe.exceptions.GorDataException;
 import org.gorpipe.exceptions.GorSystemException;
-import org.gorpipe.gor.GorContext;
-import org.gorpipe.gor.GorSession;
-import org.gorpipe.model.genome.files.gor.Row;
-import gorsat.Commands.Analysis;
+import org.gorpipe.gor.session.GorContext;
+import org.gorpipe.gor.session.GorSession;
+import org.gorpipe.gor.model.Row;
 import org.gorpipe.model.gor.RowObj;
 import org.gorpipe.model.gor.iterators.RowSource;
-import gorsat.Commands.CommandParseUtilities;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -39,6 +39,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
 import java.util.regex.Matcher;
@@ -47,9 +48,9 @@ import java.util.regex.Pattern;
 /**
  * Created by sigmar on 03/11/15.
  */
-public class ProcessIteratorAdaptor extends RowSource {
+public class ProcessIteratorAdaptor extends RowSource implements Serializable {
     private static final Logger log = LoggerFactory.getLogger(ProcessIteratorAdaptor.class);
-    private static Pattern pattern = Pattern.compile("'(?:[^']|'')+'|[^ ]+");
+    private static final Pattern pattern = Pattern.compile("'(?:[^']|'')+'|[^ ]+");
 
     static String norprefix = "chrN\t0\t";
     static String norheaderprefix = "ChromNOR\tPosNOR\t";
@@ -58,21 +59,21 @@ public class ProcessIteratorAdaptor extends RowSource {
 
     private boolean mustReCheck = true;
     private boolean myHasNext = true;
-    private BufferedReader breader;
+    private final BufferedReader breader;
 
     private final Process proc;
     final InputStream is;
 
-    private boolean skipheader;
-    private boolean nor;
+    private final boolean skipheader;
+    private final boolean nor;
 
-    private String processName = "";
-    private StringBuilder errorStr = new StringBuilder();
-    private boolean allowerror;
-    private RowSource rowSource;
-    private OutThread outThread;
+    private String processName;
+    private final StringBuilder errorStr = new StringBuilder();
+    private final boolean allowerror;
+    private final Iterator<Row> rowSource;
+    private final OutThread outThread;
 
-    class ProcessAdaptor extends Analysis {
+    static class ProcessAdaptor extends Analysis {
         OutputStream os;
         Analysis pps;
 
@@ -132,13 +133,13 @@ public class ProcessIteratorAdaptor extends RowSource {
     }
 
     private class OutThread extends Thread {
-        private RowSource rs;
-        private Analysis processPipeStep;
-        private OutputStream os;
+        private final Iterator<Row> rs;
+        private final Analysis processPipeStep;
+        private final OutputStream os;
         private Throwable th = null;
-        private String header;
+        private final String header;
 
-        OutThread(RowSource rs, Analysis processPipeStep, OutputStream os, String header) {
+        OutThread(Iterator<Row> rs, Analysis processPipeStep, OutputStream os, String header) {
             this.rs = rs;
             this.processPipeStep = processPipeStep;
             this.os = os;
@@ -160,7 +161,9 @@ public class ProcessIteratorAdaptor extends RowSource {
                     processPipeStep.process(row);
                 }
             } finally {
-                rs.close();
+                if(rs instanceof RowSource) {
+                    ((RowSource)rs).close();
+                }
             }
         }
 
@@ -187,7 +190,7 @@ public class ProcessIteratorAdaptor extends RowSource {
         }
     }
 
-    public ProcessIteratorAdaptor(GorContext context, String cmd, String alias, RowSource rs, Analysis an, String header, boolean skipheader, Optional<String> skip, boolean allowerror, boolean nor) throws IOException {
+    public ProcessIteratorAdaptor(GorContext context, String cmd, String alias, Iterator<Row> rs, Analysis an, String header, boolean skipheader, Optional<String> skip, boolean allowerror, boolean nor) throws IOException {
         this.skipheader = skipheader;
         this.nor = nor;
         this.allowerror = allowerror;
@@ -343,7 +346,9 @@ public class ProcessIteratorAdaptor extends RowSource {
     @Override
     public void setPosition(String seekChr, int seekPos) {
         mustReCheck = true;
-        rowSource.setPosition(seekChr, seekPos);
+        if(rowSource instanceof RowSource) {
+            ((RowSource)rowSource).setPosition(seekChr, seekPos);
+        }
     }
 
     @Override

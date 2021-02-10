@@ -2,20 +2,19 @@ package org.gorpipe.gor.driver.providers.stream.datatypes.parquet;
 
 import ch.qos.logback.classic.Level;
 import ch.qos.logback.classic.LoggerContext;
-import org.gorpipe.gor.GorSession;
-import org.gorpipe.model.genome.files.binsearch.GorZipLexOutputStream;
-import org.gorpipe.model.genome.files.gor.NorParquetLine;
-import org.gorpipe.model.genome.files.gor.ParquetLine;
-import org.gorpipe.model.genome.files.gor.Row;
-import org.gorpipe.exceptions.GorSystemException;
-import org.gorpipe.gor.driver.meta.SourceReference;
-import org.gorpipe.gor.driver.providers.stream.StreamSourceFile;
-import org.gorpipe.gor.driver.providers.stream.sources.StreamSource;
-import org.gorpipe.gor.driver.providers.stream.sources.file.FileSource;
 import gorsat.Analysis.Select2;
 import gorsat.Outputs.ToList;
 import gorsat.TestUtils;
 import org.aeonbits.owner.util.Collections;
+import org.gorpipe.exceptions.GorSystemException;
+import org.gorpipe.gor.session.GorSession;
+import org.gorpipe.gor.driver.meta.SourceReference;
+import org.gorpipe.gor.driver.providers.stream.StreamSourceFile;
+import org.gorpipe.gor.driver.providers.stream.sources.StreamSource;
+import org.gorpipe.gor.driver.providers.stream.sources.file.FileSource;
+import org.gorpipe.gor.binsearch.GorZipLexOutputStream;
+import org.gorpipe.gor.model.ParquetLine;
+import org.gorpipe.gor.model.Row;
 import org.junit.Assert;
 import org.junit.Test;
 import scala.collection.mutable.ListBuffer;
@@ -27,7 +26,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Comparator;
 
-import static org.junit.Assert.*;
+import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.fail;
 
 public class UTestParquetFileIterator {
 
@@ -54,8 +54,6 @@ public class UTestParquetFileIterator {
         String expected = "chrY\t10069\tT\tA\trs111065272";
         assertEquals(expected, lastRow.getAllCols().toString());
     }
-
-
 
     @Test
     public void shouldReadParquetData() {
@@ -88,9 +86,9 @@ public class UTestParquetFileIterator {
             count++;
         }
         assertEquals(48, count);
-        assertEquals(NorParquetLine.class, lastRow.getClass());
+        assertEquals(lastRow.chr,"chrN");
         String expected = "chrY\t10069\tT\tA\trs111065272";
-        assertEquals(expected, lastRow.getAllCols().toString());
+        assertEquals(expected, lastRow.otherCols());
     }
 
     @Test(expected = GorSystemException.class)
@@ -180,7 +178,7 @@ public class UTestParquetFileIterator {
         iterator.getHeader();
         try {
             ByteArrayOutputStream byteStream = new ByteArrayOutputStream();
-            GorZipLexOutputStream gorzip = new GorZipLexOutputStream(byteStream, false, null);
+            GorZipLexOutputStream gorzip = new GorZipLexOutputStream(byteStream, false, false, null);
 
             while (iterator.hasNext()) {
                 Row row = iterator.next();
@@ -323,10 +321,10 @@ public class UTestParquetFileIterator {
             tmpdir = Files.createTempDirectory("mu");
             Path tmprparquet = tmpdir.resolve("forkr.parquet");
             Path tmpparquet = tmpdir.resolve("fork.parquet");
-            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -r -f differentrsIDs " + tmprparquet.toString());
-            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -f differentrsIDs " + tmpparquet.toString());
-            String resultr = TestUtils.runGorPipe("gor "+tmprparquet.toString());
-            String result = TestUtils.runGorPipe("gor "+tmpparquet.toString());
+            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -r -f differentrsIDs " + tmprparquet);
+            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -f differentrsIDs " + tmpparquet);
+            String resultr = TestUtils.runGorPipe("gor "+ tmprparquet);
+            String result = TestUtils.runGorPipe("gor "+ tmpparquet);
             Assert.assertEquals("wrong result from partitioned parquet folder",resultr,result);
         } finally {
             if(tmpdir!=null) Files.walk(tmpdir).sorted(Comparator.reverseOrder()).forEach(p -> {
@@ -346,17 +344,17 @@ public class UTestParquetFileIterator {
             tmpdir = Files.createTempDirectory("mu");
             Path tmprparquet = tmpdir.resolve("forkr.parquet");
             Path tmpparquet = tmpdir.resolve("fork.parquet");
-            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -r -f differentrsIDs " + tmprparquet.toString());
-            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -f differentrsIDs " + tmpparquet.toString());
-            String resultr = TestUtils.runGorPipe("nor "+tmprparquet.toString());
-            String result = TestUtils.runGorPipe("nor "+tmpparquet.toString());
+            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -r -f differentrsIDs " + tmprparquet);
+            TestUtils.runGorPipe("gor ../tests/data/gor/dbsnp_test.gor | write -d -f differentrsIDs " + tmpparquet);
+            String resultr = TestUtils.runGorPipe("nor "+ tmprparquet);
+            String result = TestUtils.runGorPipe("nor "+ tmpparquet);
             Assert.assertEquals("wrong result from partitioned parquet folder",resultr,result);
         } finally {
             if(tmpdir!=null) Files.walk(tmpdir).sorted(Comparator.reverseOrder()).forEach(p -> {
                 try {
                     Files.delete(p);
                 } catch(Exception e) {
-
+                    // Ignore
                 }
             });
         }

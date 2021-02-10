@@ -22,16 +22,18 @@
 
 package gorsat.Script
 
-import gorsat.AnalysisUtilities.getSignature
+import gorsat.Utilities.AnalysisUtilities.getSignature
 import gorsat.Commands.CommandParseUtilities
-import gorsat.MacroUtilities._
+import gorsat.Utilities.MacroUtilities._
 import gorsat.Script.ScriptExecutionEngine.ExecutionBlocks
 import gorsat.gorsatGorIterator.MapAndListUtilities.singleHashMap
+import gorsat.Utilities.{AnalysisUtilities, MacroUtilities, StringUtilities}
 import gorsat.process.{GorPipeMacros, GorPrePipe, PipeInstance}
-import gorsat.{AnalysisUtilities, DynIterator, MacroUtilities, StringUtilities}
+import gorsat.DynIterator
 import org.gorpipe.exceptions.{GorParsingException, GorResourceException}
-import org.gorpipe.gor.{GorContext, GorScriptAnalyzer, GorSession}
-import org.gorpipe.model.genome.files.gor.GorParallelQueryHandler
+import org.gorpipe.gor.session.{GorContext, GorSession}
+import org.gorpipe.gor.GorScriptAnalyzer
+import org.gorpipe.gor.model.GorParallelQueryHandler
 import org.slf4j.{Logger, LoggerFactory}
 
 object ScriptExecutionEngine {
@@ -77,8 +79,8 @@ object ScriptExecutionEngine {
 /**
   * Class to execute gor scripts. Scripts are executed with the supplied query handler.
   *
-  * @param queryHandler         Remote query handler
-  * @param context              Current gor pipe session
+  * @param queryHandler Remote query handler
+  * @param context      Current gor pipe session
   */
 class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
                             localQueryHandler: GorParallelQueryHandler,
@@ -92,19 +94,19 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
 
   private val eventLogger = context.getSession.getEventLogger
 
-  def getCreatedFiles : Map[String, String] = {
+  def getCreatedFiles: Map[String, String] = {
     virtualFileManager.getCreatedFiles
   }
 
-  def getVirtualFiles : List[(String,String)] = {
+  def getVirtualFiles: List[(String, String)] = {
     Nil
   }
 
-  def getAliases : singleHashMap = {
+  def getAliases: singleHashMap = {
     aliases
   }
 
-  def execute(commands: Array[String]): String = {
+  def execute(commands: Array[String], validate: Boolean = true): String = {
     // Apply aliases to query, this replaces the def entries
     aliases = extractAliases(commands)
     var gorCommands = applyAliases(commands, aliases)
@@ -118,7 +120,7 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
     val analyzer = new GorScriptAnalyzer(gorCommands.mkString(";"))
     eventLogger.tasks(analyzer.getTasks)
 
-    val gorCommand = processScript(gorCommands)
+    val gorCommand = processScript(gorCommands, validate)
 
     gorCommand
   }
@@ -137,7 +139,7 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
     processedGorCommands
   }
 
-  private def processScript(igorCommands: Array[String]): String = {
+  private def processScript(igorCommands: Array[String], validate: Boolean): String = {
     // Parse script to execution blocks and a list of all virtual files
     // We collect all execution blocks as they are removed when executed and if there are
     // any left there is an error, something was not executed
@@ -175,7 +177,7 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
 
         virtualFileManager.addRange(activeExecutionBlocks)
 
-        activeExecutionBlocks.foreach {newExecutionBlock =>
+        activeExecutionBlocks.foreach { newExecutionBlock =>
           // Get the command to finally execute
           val commandToExecute = newExecutionBlock._2.query
 
@@ -219,15 +221,15 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
 
     // We'll need to validate the current execution and throw exception if there are still execution blocks available
     // IN the final execution list
-    postValidateExecution()
+    if (validate) postValidateExecution()
 
     gorCommand
   }
 
   private def preValidateExecution(): Unit = {
     var externalVirtualRelation: List[String] = Nil
-    executionBlocks.values.foreach{block =>
-      MacroUtilities.virtualFiles(block.query).foreach{relation =>
+    executionBlocks.values.foreach { block =>
+      MacroUtilities.virtualFiles(block.query).foreach { relation =>
         if (MacroUtilities.isExternalVirtFile(relation)) {
           externalVirtualRelation ::= relation
         }
@@ -354,37 +356,47 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
       case Some(signature) =>
         signature
       case None =>
-        val fileReader = gorPipeSession.getProjectContext.getFileReader
-        val cacheDirectory = AnalysisUtilities.theCacheDirectory(gorPipeSession)
-
-        try {
-          if (fileName.startsWith("#gordict#")) {
-            val hasTags = fileName.contains("#gortags#")
-            val dictFile = fileName.substring("#gordict#".length, if (hasTags) fileName.indexOf("#gortags#") else fileName.length())
-            val dictTags = if (hasTags) fileName.substring(fileName.indexOf("#gortags#") + "#gortags#".length, fileName.length).split(',') else null
-            val tmp = if (dictTags != null && dictTags.length > 9) fileReader.getFileSignature(dictFile) else fileReader.getDictionarySignature(dictFile, dictTags)
-
-            singleFileSignatureMap += (fileName -> tmp)
-            tmp
+        val signature = if (fileName.startsWith("#gordict#")) {
+          getGorDictSignature(gorPipeSession, fileName)
+        } else {
+          val fileReader = gorPipeSession.getProjectContext.getFileReader
+          val cacheDirectory = AnalysisUtilities.theCacheDirectory(gorPipeSession)
+          // TODO: Get a gor config instance somehow into gorpipeSession or gorContext to skip using system.getProperty here
+          val x_f_name = fileName.split('/').last.split('.').head
+          val tmp: String = if (System.getProperty("gor.caching.md5.enabled", "false").toBoolean
+            && x_f_name.split('.').head.endsWith("_md5")) {
+            // cache files with md5 have the md5 sum encoded in the filename
+            return x_f_name.split('.').head
+          } else if (fileName.startsWith(cacheDirectory)) {
+            return "0"
           } else {
-            // TODO: Get a gor config instance somehow into gorpipeSession or gorContext to skip using system.getProperty here
-            val x_f_name = fileName.split('/').last.split('.').head
-            val tmp: String = if (System.getProperty("gor.caching.md5.enabled", "false").toBoolean
-              && x_f_name.split('.').head.endsWith("_md5")) {
-              // cache files with md5 have the md5 sum encoded in the filename
-              return x_f_name.split('.').head
-            } else if (fileName.startsWith(cacheDirectory)) {
-              return "0"
-            } else {
+            try {
               fileReader.getFileSignature(fileName)
+            } catch {
+              case e: Exception => throw new GorResourceException("In fileFingerPrint: file " + fileName + " does not exist!", fileName, e)
             }
-
-            singleFileSignatureMap += (fileName -> tmp)
-            tmp
           }
-        } catch {
-          case e: Exception => throw new GorResourceException("In fileFingerPrint: file " + fileName + " does not exist!", fileName, e)
+          tmp
         }
+        singleFileSignatureMap += (fileName -> signature)
+        signature
+    }
+  }
+
+  private def getGorDictSignature(gorPipeSession: GorSession, fileName: String) = {
+    val fileReader = gorPipeSession.getProjectContext.getFileReader
+    val hasTags = fileName.contains("#gortags#")
+    val dictFile = fileName.substring("#gordict#".length, if (hasTags) fileName.indexOf("#gortags#") else fileName.length())
+    val dictTags = if (hasTags) fileName.substring(fileName.indexOf("#gortags#") + "#gortags#".length, fileName.length).split(',') else null
+    try {
+      if (dictTags != null && dictTags.length > 9) {
+        fileReader.getFileSignature(dictFile)
+      } else {
+        fileReader.getDictionarySignature(dictFile, dictTags)
+      }
+    } catch {
+      case e: GorResourceException =>
+        throw new GorResourceException(s"Could not get signature for file", dictFile, e)
     }
   }
 
@@ -409,7 +421,7 @@ class ScriptExecutionEngine(queryHandler: GorParallelQueryHandler,
         }
         getCreatedFiles.foreach(x => {
           if (x._2 != null) {
-            ScriptExecutionEngine.log.debug("runQueryHandler createdFiles: {} - {} - {}", x._1.toString, x._2.toString, "")
+            ScriptExecutionEngine.log.debug("runQueryHandler createdFiles: {} - {} - {}", x._1, x._2, "")
           }
         })
       }

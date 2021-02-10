@@ -110,6 +110,9 @@ Commands
    * - :ref:`JOIN`
      - Joins multiple sources (or a single source to itself) based on some defined overlap condition.
      - GOR
+   * - :ref:`KING`
+     - Calculates relationship statistics from a stream of horizontal genotypes.
+     - GOR
    * - :ref:`LEFTJOIN`
      - A special type of join that returns all rows from the left source along with data from the right if any matches.
      - GOR
@@ -197,6 +200,9 @@ Commands
    * - :ref:`SELECT`
      - Filters specified columns from the output stream.
      - GOR/NOR
+   * - :ref:`SELWHERE`
+     - Filters specified columns from the output stream using an expression on column names/indices.
+     - GOR/NOR
    * - :ref:`SEQ`
      - Returns the corresponding reference sequence read for each row of the output (based on the position).
      - GOR
@@ -256,6 +262,9 @@ Commands
      - GOR/NOR
    * - :ref:`VERIFYORDER`
      - Ensures that the genomic order of a GOR stream is correct, raising an exception if not.
+     - GOR
+   * - :ref:`VERIFYVARIANT`
+     - Ensures that the reference column corresponds to the configured build, raising an exception if not.
      - GOR
    * - :ref:`WAIT`
      - Wait the specified number of milliseconds.

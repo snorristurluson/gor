@@ -22,18 +22,18 @@
 
 package gorsat.process;
 
-import org.gorpipe.model.genome.files.gor.FileReader;
-import org.gorpipe.model.genome.files.gor.Row;
+import gorsat.Iterators.NorInputSource;
 import org.gorpipe.exceptions.GorDataException;
 import org.gorpipe.exceptions.GorParsingException;
 import org.gorpipe.exceptions.GorResourceException;
 import org.gorpipe.exceptions.GorSystemException;
+import org.gorpipe.gor.session.GorSession;
 import org.gorpipe.gor.table.Dictionary;
-import org.gorpipe.gor.GorSession;
+import org.gorpipe.gor.model.FileReader;
+import org.gorpipe.gor.model.Row;
 import org.gorpipe.model.gor.RowObj;
 import org.gorpipe.model.gor.iterators.RowSource;
-import org.gorpipe.util.string.StringUtil;
-import gorsat.Iterators.NorInputSource;
+import org.gorpipe.gor.util.StringUtil;
 
 import java.io.IOException;
 import java.nio.file.Path;
@@ -59,19 +59,19 @@ import java.util.stream.Stream;
  * <p>Example of a nor dictionary:
  *
  *
- * <p><p>##Source=phenotype
+ * <p>##Source=phenotype
  * <p>#Source\tTag\n
  * <p>./nor/file1.tsv\tPatient_1\n
  * <p>./nor/file2.tsv\tPatient_2\n
  * <p>./nor/file3.tsv\tPatient_3\n
- * <p>#./nor/file4.tsv\tPatient_4\n   -> Ignored
+ * <p>#./nor/file4.tsv\tPatient_4\n   -&gt; Ignored
  *
- * <p><p>Nor dictionaries do not support bucketization as there only one file open at a time.
+ * <p>Nor dictionaries do not support bucketization as there only one file open at a time.
  *
  */
 public class NordIterator extends RowSource {
 
-    private Map<String,String> properties = new HashMap<>();
+    private final Map<String,String> properties = new HashMap<>();
     private final boolean useFilter;
     private final Set<String> filterEntries;
     private final String nordFile;
@@ -241,7 +241,7 @@ public class NordIterator extends RowSource {
 
             if (!entryPath.isAbsolute()) {
                 Dictionary.FileReference reference = Dictionary.getDictionaryFileParent(Paths.get(this.projectRoot, this.nordFile), this.projectRoot);
-                Dictionary.DictionaryLine line = Dictionary.parseDictionaryLine(activeEntry.toString(), reference);
+                Dictionary.DictionaryLine line = Dictionary.parseDictionaryLine(activeEntry.toString(), reference, this.nordFile);
 
                 if (reference.logical != null)
                     fileName = line.fileRef.logical;
@@ -253,7 +253,12 @@ public class NordIterator extends RowSource {
             this.activeIterator = new NorInputSource(fileName, this.fileReader, false, this.forceReadOfHeader, 0, false, false);
 
             // Test header
-            getHeaderFromIterator(this.activeIterator);
+            try {
+                getHeaderFromIterator(this.activeIterator);
+            } catch (Exception e) {
+                close();
+                throw e;
+            }
             return true;
         } else {
             return false;
@@ -271,8 +276,8 @@ public class NordIterator extends RowSource {
         if (getHeader().isEmpty()) {
             setHeader(iteratorHeader);
             headerSize = iteratorHeader.split("\t").length;
-        } else if (iteratorHeader.split("\t").length != headerSize) {
-            throw new GorDataException("Header lengths do not match between dictionary files for: " + activeEntry.getTag());
+        } else if (!iteratorHeader.equalsIgnoreCase(getHeader())) {
+            throw new GorDataException("Headers do not match between dictionary files for: " + activeEntry.getTag());
         }
     }
 

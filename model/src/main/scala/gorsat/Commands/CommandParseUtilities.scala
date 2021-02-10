@@ -24,7 +24,7 @@ package gorsat.Commands
 
 import gorsat.Commands.GenomicRange.Range
 import org.gorpipe.exceptions.GorParsingException
-import org.gorpipe.model.genome.files.gor.GorCommand
+import org.gorpipe.gor.model.GorCommand
 
 import scala.collection.mutable
 import scala.collection.mutable.ListBuffer
@@ -141,6 +141,26 @@ object CommandParseUtilities {
       throw new GorParsingException(s"Value missing for option $name", name, args(index + 1))
     }
     args(index + 1)
+  }
+
+  def charValueOfOption(args: Array[String], name: String): Char = {
+    val idx = indexOfOption(args, name) + 1
+    if (idx == 0) {
+      throw new GorParsingException(s"Value option $name is not found", name, "")
+    } else if (idx >= args.length) {
+      throw new GorParsingException(s"Value not found for option $name", name, "")
+    } else {
+      val s = args(idx)
+      val len = args(idx).length
+      if (len == 1) {
+        s.head
+      } else if (len == 3 && ((s(0) == '\'' && s(len - 1) == '\'') || (s(0) == '\"' || s(len - 1) == '\"'))) {
+        s(1)
+      } else {
+        throw new GorParsingException(s"Character option $name only takes one character as argument.\n" +
+          s"Current argument ${args(idx)} is invalid.", name, "")
+      }
+    }
   }
 
   def stringArrayOfOption(args: Array[String], name: String): Array[String] = {
@@ -350,7 +370,7 @@ object CommandParseUtilities {
 
       if (forNor) col += 2
     } catch {
-      case e: Exception =>
+      case _: Exception =>
 
         if (columnNumberOrName.indexOf("[") > 0 && columnNumberOrName.indexOf("]") > columnNumberOrName.indexOf("[")) {
           try {
@@ -358,7 +378,7 @@ object CommandParseUtilities {
             name = columnNumberOrName.substring(0, b).toUpperCase
             offset = columnNumberOrName.substring(b + 1, e).toInt
           } catch {
-            case e: Exception => throw new GorParsingException(s"Column $columnNumberOrName has illegal offset.")
+            case _: Exception => throw new GorParsingException(s"Column $columnNumberOrName has illegal offset.")
           }
         } else {
           name = columnNumberOrName.toUpperCase
@@ -451,7 +471,7 @@ object CommandParseUtilities {
     try {
       columnIndices = columnsFromHeader(columns, header, forNor, ignoreNonExisting)
     } catch {
-      case gpe: GorParsingException =>
+      case _: GorParsingException =>
 
     }
 
@@ -623,11 +643,11 @@ object CommandParseUtilities {
     val trimmedCommand = command.trim()
     val ip = quoteSafeIndexOf(trimmedCommand, ">(")
     if (ip < 0) {
-      throw new GorParsingException("Bad nested process gorpipe command: " + trimmedCommand);
+      throw new GorParsingException("Bad nested process gorpipe command: " + trimmedCommand)
     }
     val ep = findEndBracketPos(ip + 2, trimmedCommand)
     if (ep < ip + 2 || ep < trimmedCommand.length - 1) {
-      throw new GorParsingException("Nested process gorpipe command not closed with a bracket: " + trimmedCommand);
+      throw new GorParsingException("Nested process gorpipe command not closed with a bracket: " + trimmedCommand)
     }
     trimmedCommand.slice(ip + 2, ep).trim
   }
@@ -640,11 +660,11 @@ object CommandParseUtilities {
     val trimmedCommand = command.trim()
     val ip = quoteSafeIndexOf(trimmedCommand, "<(")
     if (ip < 0) {
-      throw new GorParsingException("Bad nested gorpipe command: " + trimmedCommand);
+      throw new GorParsingException("Bad nested gorpipe command: " + trimmedCommand)
     }
     val ep = findEndBracketPos(ip + 2, trimmedCommand)
     if (ep < ip + 2 || ep < trimmedCommand.length - 1) {
-      throw new GorParsingException("Nested gorpipe command not closed with a bracket: " + trimmedCommand);
+      throw new GorParsingException("Nested gorpipe command not closed with a bracket: " + trimmedCommand)
     }
     trimmedCommand.slice(ip + 2, ep)
   }
@@ -727,6 +747,7 @@ object CommandParseUtilities {
     ("NORSTDIN", TSV_EXTENSION),
     ("NORROWS", TSV_EXTENSION),
     ("SPARK", PARQUET_EXTENSION),
+    ("SELECT", PARQUET_EXTENSION),
     (GOR_DICTIONARY, GOR_DICTIONARY_EXTENSION),
     (GOR_DICTIONARY_PART, GOR_DICTIONARY_EXTENSION),
     (NOR_DICTIONARY, NOR_DICTIONARY_EXTENSION),
@@ -944,7 +965,7 @@ object CommandParseUtilities {
         if (quotes.exists(x => x.quote == c)) {
           if (withinQuotes && (backSlashCount % 2) == 0) {
             if (c == quoteType) {
-              withinQuotes = false;
+              withinQuotes = false
               patternQuote = false
             }
           } else if (backSlashCount % 2 == 0) {
@@ -957,9 +978,9 @@ object CommandParseUtilities {
         if (withinQuotes && c == '\\') backSlashCount += 1 else backSlashCount = 0
 
         if (j == 0) {
-          wq = withinQuotes;
-          pq = patternQuote;
-          qt = quoteType;
+          wq = withinQuotes
+          pq = patternQuote
+          qt = quoteType
           bc = backSlashCount
         }
         if (c == searchString(j)) {

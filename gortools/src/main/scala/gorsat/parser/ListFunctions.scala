@@ -29,7 +29,7 @@ import gorsat.Commands.ColumnSelection
 import gorsat.parser.FunctionSignature._
 import gorsat.parser.FunctionTypes.{bFun, dFun, iFun, sFun}
 import org.gorpipe.exceptions.GorParsingException
-import org.gorpipe.gor.ColumnValueProvider
+import org.gorpipe.gor.model.ColumnValueProvider
 
 import scala.collection.mutable
 
@@ -55,6 +55,8 @@ object ListFunctions {
     functions.register("LISTNUMSORTDESC", getSignatureString2String(listNumSortDesc), listNumSortDesc _)
     functions.register("LISTINDEX", getSignatureStringString2Int(listIndex), listIndex _)
     functions.register("LISTINDEX", getSignatureStringStringString2Int(listIndexWithDelimiter), listIndexWithDelimiter _)
+    functions.register("LISTCOUNT", getSignatureString2String(listCount), listCount _)
+    functions.register("LISTCOUNT", getSignatureStringString2String(listCountWithDelimiter), listCountWithDelimiter _)
     functions.register("LISTLAST", getSignatureString2String(listLast), listLast _)
     functions.register("LISTLAST", getSignatureStringString2String(listLastWithDelimiter), listLastWithDelimiter _)
     functions.register("LISTTAIL", getSignatureString2String(listTail), listTail _)
@@ -102,7 +104,7 @@ object ListFunctions {
   }
 
   def cols2Listmap(owner: ParseArith, columnSelection: sFun, expression: sFun): sFun = {
-    cols2ListmapCustomSep(owner, columnSelection, expression, cvp => ",")
+    cols2ListmapCustomSep(owner, columnSelection, expression, _ => ",")
   }
 
 
@@ -111,7 +113,7 @@ object ListFunctions {
       try {
         ColumnSelection(owner.getHeader.toString, columnSelection(dummyCvp), owner.context, owner.executeNor)
       } catch {
-        case e: NullPointerException => throw new GorParsingException("COLS2LISTMAP expects a quoted column selection " +
+        case _: NullPointerException => throw new GorParsingException("COLS2LISTMAP expects a quoted column selection " +
           "expression")
       }
     }
@@ -120,7 +122,7 @@ object ListFunctions {
         val exprSrc = expression(dummyCvp)
         Cols2ListAnalysis.compileExpression(exprSrc, owner.getHeader)
       } catch {
-        case e: NullPointerException => throw new GorParsingException("COLS2LISTMAP expects a quoted expression")
+        case _: NullPointerException => throw new GorParsingException("COLS2LISTMAP expects a quoted expression")
       }
     }
 
@@ -136,7 +138,7 @@ object ListFunctions {
   }
 
   def cols2List(owner: ParseArith, columnSelection: sFun): sFun = {
-    cols2ListCustomSep(owner, columnSelection, cvp => ",")
+    cols2ListCustomSep(owner, columnSelection, _ => ",")
   }
 
   def cols2ListCustomSep(owner: ParseArith, columnSelection: sFun, sep: sFun): sFun = {
@@ -144,7 +146,7 @@ object ListFunctions {
       try {
         ColumnSelection(owner.getHeader.toString, columnSelection(dummyCvp), owner.context, owner.executeNor)
       } catch {
-        case e: NullPointerException => throw new GorParsingException("COLS2LIST expects a qouted column selection " +
+        case _: NullPointerException => throw new GorParsingException("COLS2LIST expects a qouted column selection " +
           "expression")
       }
     }
@@ -399,7 +401,7 @@ object ListFunctions {
     val filter = owner.createSubFilter()
     filter.compileFilter(ex3(dummyCvp))
     cvp =>
-      listZipFilterInner(cvp, filter, ex1(cvp), ex2(cvp), ex3(cvp))
+      listZipFilterInner(cvp, filter, ex1(cvp), ex2(cvp))
 
   }
 
@@ -407,11 +409,11 @@ object ListFunctions {
     val filter = owner.createSubFilter()
     filter.compileFilter(ex3(dummyCvp))
     cvp =>
-      listZipFilterInner(cvp, filter, ex1(cvp), ex2(cvp), ex3(cvp), ex4(cvp))
+      listZipFilterInner(cvp, filter, ex1(cvp), ex2(cvp), ex4(cvp))
 
   }
 
-  def listZipFilterInner(cvp: ColumnValueProvider, filter: ParseArith, arg1: String, arg2: String, arg3: String,
+  def listZipFilterInner(cvp: ColumnValueProvider, filter: ParseArith, arg1: String, arg2: String,
                          delimiter: String = ","): String = {
     val buffer = new java.lang.StringBuilder()
 
@@ -653,6 +655,27 @@ object ListFunctions {
 
   def listIndexWithDelimiter(ex1: sFun, ex2: sFun, ex3: sFun): iFun = {
     cvp => listIndexInner(ex1(cvp), ex2(cvp), ex3(cvp))
+  }
+
+  def listCount(ex1: sFun): sFun = {
+     listCountWithDelimiter(ex1,cvp => { "," })
+  }
+
+  def listCountWithDelimiter(ex1: sFun, ex2: sFun): sFun = {
+    case class CountHolder(var count : Int)
+    var groupCount = scala.collection.mutable.HashMap.empty[String, CountHolder]
+    cvp => {
+      ex1(cvp).split(ex2(cvp),-1).foreach( x => {
+          groupCount.get(x) match {
+            case Some(x) => x.count += 1
+            case None =>
+              val c = CountHolder(1)
+              groupCount += (x -> c)
+          }
+        }
+      )
+      groupCount.toList.sortWith((x,y) => x._1 < y._1).map(x => (x._1+';'+x._2.count)).mkString(ex2(cvp))
+    }
   }
 
   private def listIndexInner(string: String, target: String, delimiter: String = ","): Int = {

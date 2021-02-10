@@ -2,6 +2,7 @@
    :maxdepth: 1
    :hidden:
 
+   functions/adddays
    functions/abs
    functions/arccosine
    functions/arcsine
@@ -16,6 +17,7 @@
    functions/contains
    functions/containsany
    functions/cosine
+   functions/daydiff
    functions/div
    functions/float
    functions/floor
@@ -70,3 +72,4 @@
    functions/unbracket
    functions/upper
    functions/vcfformattag
+   functions/yeardiff

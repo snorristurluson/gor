@@ -23,11 +23,11 @@
 package gorsat.Macros
 
 import gorsat.Commands.{CommandArguments, CommandParseUtilities}
-import gorsat.MacroUtilities
 import gorsat.Script.{ExecutionBlock, MacroInfo, MacroParsingResult, ScriptParsers}
+import gorsat.Utilities.MacroUtilities
 import gorsat.process.{GorInputSources, GorPipeMacros, SourceProvider}
 import org.gorpipe.exceptions.GorParsingException
-import org.gorpipe.gor.GorContext
+import org.gorpipe.gor.session.GorContext
 
 /**
   * PArallel macro is used to create generic paralisation of gor commands. Parallel takes in a split file or nested
@@ -66,32 +66,36 @@ class Parallel extends MacroInfo("PARALLEL", CommandArguments("", "-parts -limit
     val theKey = createKey.slice(1, createKey.length - 1)
     var theDependencies: List[String] = Nil
     var partitionIndex = 1
-    val columns = getColumnsFromQuery(parallelQuery, header, forNor = true)
+    try {
+      val columns = getColumnsFromQuery(parallelQuery, header, forNor = true)
 
-    if (columns.isEmpty) {
-      throw new GorParsingException("Input query must contain replacement tags, e.g. #{col:column_name}")
-    }
-
-    while (partsSource.hasNext) {
-      val row = partsSource.next()
-      val parKey = "[" + theKey + "_" + partitionIndex + "]"
-
-      var newCommand = parallelQuery
-
-      columns.foreach{ x =>
-        newCommand = newCommand.replace("#{col:" + x._1 + "}", row.colAsString(x._2))
+      if (columns.isEmpty) {
+        throw new GorParsingException("Input query must contain replacement tags, e.g. #{col:column_name}")
       }
 
-      if (!extraCommands.isEmpty) newCommand += " " + extraCommands
+      while (partsSource.hasNext) {
+        val row = partsSource.next()
+        val parKey = "[" + theKey + "_" + partitionIndex + "]"
 
-      parGorCommands += (parKey -> ExecutionBlock(create.groupName, newCommand, create.dependencies, create.batchGroupName))
-      theDependencies ::= parKey
+        var newCommand = parallelQuery
 
-      partitionIndex += 1
+        columns.foreach{ x =>
+          newCommand = newCommand.replace("#{col:" + x._1 + "}", row.colAsString(x._2))
+        }
 
-      if (partitionIndex >= taskExecutionLimit) {
-        throw new GorParsingException(s"Maximum number of concurrent tasks limit exceeded. Maximum number of tasks are $taskExecutionLimit")
+        if (!extraCommands.isEmpty) newCommand += " " + extraCommands
+
+        parGorCommands += (parKey -> ExecutionBlock(create.groupName, newCommand, create.dependencies, create.batchGroupName))
+        theDependencies ::= parKey
+
+        partitionIndex += 1
+
+        if (partitionIndex >= taskExecutionLimit) {
+          throw new GorParsingException(s"Maximum number of concurrent tasks limit exceeded. Maximum number of tasks are $taskExecutionLimit")
+        }
       }
+    } finally {
+      partsSource.close()
     }
 
     val theCommand = Range(1,parGorCommands.size+1).foldLeft(getDictionaryType(cmdToModify)) ((x, y) => x + " [" + theKey + "_" + y + "] " + y)

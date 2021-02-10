@@ -28,8 +28,9 @@ package gorsat
 
 import gorsat.Commands.{CommandArguments, CommandParseUtilities}
 import org.gorpipe.exceptions.{GorDataException, GorSystemException}
-import org.gorpipe.gor.{GorContext, GorSession}
-import org.gorpipe.model.genome.files.gor.{Line, Row}
+import org.gorpipe.gor.model.Row
+import org.gorpipe.gor.session.{GorContext, GorSession}
+import org.gorpipe.gor.util.Util
 import org.gorpipe.model.gor.iterators.{LineIterator, RowSource, TimedRowSource}
 import org.gorpipe.model.gor.{Pipes, RowObj}
 import org.gorpipe.util.Pair
@@ -131,8 +132,8 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
       itDyn = createGorIterator(context)
       itDyn.fixHeader = fixHeader
       itDyn.scalaInit(iteratorCommand)
-      usedFiles = itDyn.usedFiles
-      theSource = itDyn.theIterator
+      usedFiles = itDyn.getUsedFiles
+      theSource = itDyn.getRowSource
     }
     mustReCheck = false
     myHasNext = theSource.hasNext
@@ -191,8 +192,8 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
     itDyn = createGorIterator(context)
     itDyn.fixHeader = fixHeader
     itDyn.scalaInit(modifiedCommand(iteratorCommand,seekChr,seekPos,-1,seekOnly = true))
-    usedFiles = itDyn.usedFiles
-    theSource = itDyn.theIterator
+    usedFiles = itDyn.getUsedFiles
+    theSource = itDyn.getRowSource
     seekedChr = seekChr
     seekedPos = seekPos
     mustReCheck = true
@@ -204,9 +205,9 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
     itDyn = createGorIterator(context)
     itDyn.fixHeader = fixHeader
     itDyn.scalaInit(modifiedCommand(iteratorCommand,seekChr,seekPos,endPos,seekOnly = false))
-    usedFiles = itDyn.usedFiles
+    usedFiles = itDyn.getUsedFiles
 
-    theSource = itDyn.theIterator
+    theSource = itDyn.getRowSource
     seekedChr = seekChr
     seekedPos = seekPos
     mustReCheck = true
@@ -231,11 +232,10 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
     if (itDyn != null) itDyn.close() // calls theSource.close
   }
 
-  override def getHeader : String = {
+  def getContextHeader(norContext : Boolean) : String = {
     var header = super.getHeader
     if (header != "") return header
-    val i = iteratorCommand.indexOf("<(")
-    val itCmd = (if( i > -1 ) iteratorCommand.substring(i) else iteratorCommand).replace("| top 0 ", "")
+    val itCmd = Util.removeSeekFilterOptionsFromQuery(iteratorCommand.replace("| top 0 ", ""))
 
     drsGorPipeSession.getCache.getHeaderFileMap.putIfAbsent(itCmd, new Pair[String, Array[String]]())
 
@@ -253,18 +253,22 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
         var headerItDyn: gorsatGorIterator = null
         headerItDyn = createGorIterator(context.createNestedContext(null, null, "getHeader"))
         headerItDyn.fixHeader = fixHeader
-        var iteratorCommand2 = iteratorCommand
-        if (iteratorCommand2.contains(" -seek ")) {
-          val largs = CommandParseUtilities.quoteSafeSplit(iteratorCommand2, ' ')
-          val chrpos = CommandParseUtilities.stringValueOfOption(largs, "-seek")
-          iteratorCommand2 = iteratorCommand2.replace("-seek " + chrpos, "")
+        val mcmd = if (norContext) {
+          iteratorCommand
+        } else {
+          var iteratorCommand2 = iteratorCommand
+          if (iteratorCommand2.contains(" -seek ")) {
+            val largs = CommandParseUtilities.quoteSafeSplit(iteratorCommand2, ' ')
+            val chrpos = CommandParseUtilities.stringValueOfOption(largs, "-seek")
+            iteratorCommand2 = iteratorCommand2.replace("-seek " + chrpos, "")
+          }
+          modifiedCommand(iteratorCommand2, "chr1", 0, -1, seekOnly = false, getHeader = true)
         }
-        val mcmd = modifiedCommand(iteratorCommand2, "chr1", 0, -1, seekOnly = false, getHeader = true)
         headerItDyn.scalaInit(mcmd)
         nor = headerItDyn.isNorContext
         header = headerItDyn.getHeader
         headerFiles.setFormer(header)
-        headerFiles.setLatter(headerItDyn.usedFiles.toArray)
+        headerFiles.setLatter(headerItDyn.getUsedFiles.toArray)
 
         headerItDyn.close()
         setHeader(header)
@@ -274,6 +278,10 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
     header
   }
 
+  override def getHeader : String = {
+    getContextHeader(false)
+  }
+
   def getLineHeader : String = {
     getHeader
   }
@@ -281,8 +289,24 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
 
   class DynamicNorSource(iteratorCommand : String, context: GorContext) extends DynamicRowSource(iteratorCommand, context) with LineIterator {
     override def nextLine : String = { super.next().otherCols }
-    override def getLineHeader : String = { super.getHeader.split("\t").slice(2,1000).mkString("\t") }
+    override def getHeader : String = {
+      getContextHeader(true)
+    }
+    override def getLineHeader : String = {
+      val rawHeader = super.getHeader
+      val firstTabIndex = rawHeader.indexOf('\t')
+      val secondTabIndex = rawHeader.indexOf('\t', firstTabIndex + 1)
+      rawHeader.substring(secondTabIndex + 1)
+    }
+    def getIterator: Iterator[String] = {
+      val dns = this
+      new Iterator[String] {
+        override def hasNext: Boolean = dns.hasNext
+        override def next: String = dns.nextLine
+      }
+    }
   }
+
   class DynamicNorGorSource(iteratorCommand : String, context: GorContext) extends DynamicRowSource(iteratorCommand, context) {
     override def next() : Row = { val x = super.next(); RowObj("chr1",0,x.toString) }
     override def getHeader : String = { "ChromNOR\tPosNOR\t"+super.getHeader }
@@ -308,5 +332,4 @@ class DynamicRowSource(iteratorCommand : String, context: GorContext, fixHeader 
       val h = super.getHeader
       h.substring(h.indexOf('\t',h.indexOf('\t')+1)+1) }
   }
-
 }

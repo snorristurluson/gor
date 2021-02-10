@@ -23,10 +23,10 @@
 package gorsat.Commands
 
 import gorsat.Commands.CommandParseUtilities._
-import gorsat.IteratorUtilities.validHeader
+import gorsat.Utilities.IteratorUtilities.validHeader
 import gorsat.process.PipeInstance
 import org.gorpipe.exceptions.GorParsingException
-import org.gorpipe.gor.GorContext
+import org.gorpipe.gor.session.GorContext
 
 
 class Liftover extends CommandInfo("LIFTOVER",
@@ -240,11 +240,11 @@ class Liftover extends CommandInfo("LIFTOVER",
     }
 
 
-    val itDyn = PipeInstance.createGorIterator(context)
-    itDyn.scalaPipeStepInit(command, combinedHeader)
+    val itDyn = new PipeInstance(context)
+    val pipestep = itDyn.createPipestep(command, combinedHeader)
     combinedHeader = itDyn.getHeader
 
-    CommandParsingResult(itDyn.thePipeStep, combinedHeader)
+    CommandParsingResult(pipestep, combinedHeader)
   }
 }
 

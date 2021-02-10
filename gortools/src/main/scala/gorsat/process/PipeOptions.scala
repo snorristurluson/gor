@@ -24,11 +24,10 @@ package gorsat.process
 
 import java.util.UUID
 
-import org.gorpipe.model.genome.files.gor.FileReader
 import gorsat.Commands.CommandParseUtilities
 import gorsat.gorsatGorIterator.MapAndListUtilities
 import org.gorpipe.exceptions.GorParsingException
-import org.gorpipe.model.genome.files.gor.DefaultFileReader
+import org.gorpipe.gor.model.DefaultFileReader
 
 object PipeOptions {
   def parseInputArguments(args:Array[String]) : PipeOptions = {

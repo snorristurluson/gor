@@ -24,11 +24,11 @@ package gorsat.Macros
 
 import gorsat.Commands.{CommandArguments, CommandParseUtilities}
 import gorsat.Script.{ExecutionBlock, MacroInfo, MacroParsingResult}
+import gorsat.Utilities.{AnalysisUtilities, MacroUtilities}
 import gorsat.gorsatGorIterator.MapAndListUtilities
-import gorsat.{AnalysisUtilities, MacroUtilities}
 import org.gorpipe.exceptions.{GorDataException, GorParsingException}
-import org.gorpipe.gor.{GorContext, GorSession}
-import org.gorpipe.model.genome.files.gor.FileReader
+import org.gorpipe.gor.model.FileReader
+import org.gorpipe.gor.session.{GorContext, GorSession}
 
 import scala.collection.mutable
 
@@ -97,7 +97,7 @@ class PartGor extends MacroInfo("PARTGOR", CommandArguments("", "-s -p -f -ff -f
       val tagsFound = bucketMap.keys.map(x => bucketMap(x)._1).fold(Nil)((t, x) => {
         x ::: t
       }).map(x => x -> true).toMap
-      val temp = tagSet.filter(x => tagsFound.get(x).isEmpty)
+      val temp = tagSet.filter(x => !tagsFound.contains(x))
       if (temp.nonEmpty) {
         throw new GorParsingException("Error in tag set - tags are not found in the dictionary: " + temp.slice(0, 100))
       }

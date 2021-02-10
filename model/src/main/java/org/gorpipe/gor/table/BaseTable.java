@@ -22,18 +22,19 @@
 
 package org.gorpipe.gor.table;
 
+import gorsat.Commands.CommandParseUtilities;
+import org.apache.commons.io.FilenameUtils;
+import org.apache.commons.lang.ArrayUtils;
 import org.gorpipe.exceptions.GorDataException;
 import org.gorpipe.exceptions.GorSystemException;
 import org.gorpipe.gor.driver.DataSource;
 import org.gorpipe.gor.driver.GorDriverFactory;
 import org.gorpipe.gor.driver.meta.SourceReference;
 import org.gorpipe.gor.driver.meta.SourceReferenceBuilder;
-import org.gorpipe.model.genome.files.gor.GenomicIterator;
-import org.gorpipe.model.genome.files.gor.GorOptions;
-import org.gorpipe.model.util.ByteTextBuilder;
-import org.gorpipe.model.util.Util;
-import org.apache.commons.io.FilenameUtils;
-import org.apache.commons.lang.ArrayUtils;
+import org.gorpipe.gor.model.GenomicIterator;
+import org.gorpipe.gor.model.GorOptions;
+import org.gorpipe.gor.util.ByteTextBuilder;
+import org.gorpipe.gor.util.Util;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -59,10 +60,11 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
     private static final Logger log = LoggerFactory.getLogger(BaseTable.class);
 
     private static final boolean DEFAULT_VALIDATE_FILES = Boolean.parseBoolean(System.getProperty("GOR_TABLE_FILES_VALIDATE", "true"));
-    private static final String DEFAULT_SOURCE_COLUMN = "PN";
+    private static final String DEFAULT_SOURCE_COLUMN = "Source";
     private static final boolean FORCE_SAME_COLUMN_NAMES = false;
     public static final String HISTORY_DIR_NAME = "history";
     public static final boolean DEFAULT_USE_HISTORY = true;
+    private static final boolean DEFAULT_BUCKETIZE = true;
 
     private final Path path;            // Path to the table (currently absolute instead of real for compatibility with older code).
     private final Path folderPath;      // Path to the table folder.  The table folder is hidden folder that sits next to the
@@ -76,19 +78,20 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
     protected String securityContext;
 
     protected final TableHeader header;                // Header info.
-    private String tagColumn = DEFAULT_SOURCE_COLUMN;     // Name of the files tag column (source column).
+    private String sourceColumn = DEFAULT_SOURCE_COLUMN;     // Name of the files tag column (source column).
     private boolean useHistory = DEFAULT_USE_HISTORY;
     private boolean hasUniqueTags = false;    //True if we don't want to allow double entries of the same tag
     private boolean validateFiles = DEFAULT_VALIDATE_FILES;
+    private Boolean bucketize = true;
 
     protected ITableEntries<T> tableEntries;
 
-    private TableLog tableLog;
+    private final TableLog tableLog;
 
     protected BaseTable(Builder builder) {
         this(builder.path);
-        if (builder.tagColumn != null) {
-            setTagColumn(builder.tagColumn);
+        if (builder.sourceColumn != null) {
+            setSourceColumn(builder.sourceColumn);
         }
         if (builder.validateFiles != null) {
             setValidateFiles(builder.validateFiles);
@@ -98,6 +101,9 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         }
         if (builder.uniqueTags != null) {
             setUniqueTags(builder.uniqueTags);
+        }
+        if(builder.securityContext != null) {
+            setSecurityContext(builder.securityContext);
         }
     }
 
@@ -118,7 +124,6 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         this.historyDir = this.folderPath.resolve(HISTORY_DIR_NAME);
         this.tableLog = new TableLog(this.historyDir);
 
-        this.securityContext = securityContext;
         this.tableEntries = createTableEntries(this.getPath());
         this.header = new TableHeader();
 
@@ -164,12 +169,12 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         return this.header.getColumns();
     }
 
-    public String getTagColumn() {
-        return this.tagColumn;
+    public String getSourceColumn() {
+        return this.sourceColumn;
     }
 
-    public void setTagColumn(String tagColumn) {
-        this.tagColumn = tagColumn;
+    public void setSourceColumn(String sourceColumn) {
+        this.sourceColumn = sourceColumn;
     }
 
     public Path getRootPath() {
@@ -194,18 +199,22 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         return securityContext;
     }
 
+    public void setSecurityContext(String securityContext) {
+        this.securityContext = securityContext;
+    }
+
     /**
-     * Get table property <key>
+     * Get table property {@code key}
      *
      * @param key property to get.
-     * @return table properyt <key>
+     * @return table properyt {@code key}
      */
     public String getProperty(String key) {
         return this.header.getProperty(key);
     }
 
     /**
-     * Set table property <key>
+     * Set table property {@code key}
      *
      * @param key   property name.
      * @param value property value
@@ -230,6 +239,14 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
 
     public void setValidateFiles(boolean validateFiles) {
         this.validateFiles = validateFiles;
+    }
+
+    public boolean isBucketize() {
+        return bucketize != null ? bucketize : DEFAULT_BUCKETIZE;
+    }
+
+    public void setBucketize(boolean bucketize) {
+        this.bucketize = bucketize;
     }
 
     public boolean isHasUniqueTags() {
@@ -319,31 +336,43 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
             }
             // Validate the new file.
             if (validateFiles) {
-                try {
-                    if (isLocal(line.getContentReal())) {
-                        if (!Files.exists(Paths.get(fixFileSchema(line.getContentReal())))) {
-                            throw new GorDataException(String.format("Local entry %s does not exists!", line.getContentReal()));
-                        }
-                    } else {
-                        // Remote.
-                        SourceReference sourceRef = new SourceReferenceBuilder(line.getContentReal()).securityContext(securityContext).build();
-                        DataSource ds = GorDriverFactory.fromConfig().getDataSource(sourceRef);
-                        if ((ds == null || !ds.exists()) && securityContext != null) {
-                            throw new GorDataException(String.format("Remote entry %s does not exists!", line.getContentReal()));
-                        }
-                    }
-                } catch (IOException ex) {
-                    throw new GorDataException(String.format("Entry %s can not be verified!", line.getContentReal()), ex);
-                }
-
-                updateValidateHeader(line);
+                validateFile(line);
             }
 
-            this.tableEntries.insert(line, hasUniqueTags);
-            if (useHistory) {
-                tableLog.logAfter(TableLog.LogAction.INSERT, "", line);
-            }
+            this.tableEntries.insert(line, isHasUniqueTags());
+            logAfter(TableLog.LogAction.INSERT, "", line);
         }
+    }
+
+    private void validateFile(T line) {
+        // Validate file existence.
+        log.trace("Start validating file");
+        try {
+            if (isLocal(line.getContentReal())) {
+                if (!Files.exists(Paths.get(fixFileSchema(line.getContentReal())))) {
+                    throw new GorDataException(String.format("Local entry %s does not exists!", line.getContentReal()));
+                }
+            } else {
+                // Remote.
+                SourceReference sourceRef = new SourceReferenceBuilder(line.getContentReal()).securityContext(securityContext).build();
+                DataSource ds = GorDriverFactory.fromConfig().getDataSource(sourceRef);
+                if ((ds == null || !ds.exists()) && securityContext != null) {
+                    throw new GorDataException(String.format("Remote entry %s does not exists!", line.getContentReal()));
+                }
+            }
+        } catch (IOException ex) {
+            throw new GorDataException(String.format("Entry %s can not be verified!", line.getContentReal()), ex);
+        }
+
+        // Validate file columns.
+        updateValidateHeader(line);
+
+        // Update bucketize
+        if (bucketize == null) {
+            bucketize = inferShouldBucketizeFromFile(line.getContentReal());
+        }
+
+        log.trace("Done validating file");
     }
 
     @SafeVarargs
@@ -365,9 +394,7 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
     public void delete(Collection<T> lines) {
         for (T line : lines) {
             tableEntries.delete(line, true);
-            if (useHistory) {
-                tableLog.logAfter(TableLog.LogAction.DELETE, "", line);
-            }
+            logAfter(TableLog.LogAction.DELETE, "", line);
         }
     }
 
@@ -401,14 +428,10 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
                     String bucket = lineToRemoveFrom.getBucket();
                     if (lineToRemoveFrom.isDeleted()) {
                         tableEntries.delete(lineToRemoveFrom, false);
-                        if (useHistory) {
-                            tableLog.logAfter(TableLog.LogAction.DELETE, bucket, lineToRemoveFrom);
-                        }
+                        logAfter(TableLog.LogAction.DELETE, bucket, lineToRemoveFrom);
                     } else {
                         lineToRemoveFrom.setBucket("");
-                        if (useHistory) {
-                            tableLog.logAfter(TableLog.LogAction.REMOVEFROMBUCKET, bucket, lineToRemoveFrom);
-                        }
+                        logAfter(TableLog.LogAction.REMOVEFROMBUCKET, bucket, lineToRemoveFrom);
                     }
                 }
             }
@@ -512,7 +535,7 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
      */
     public void reload() {
         // Loading is split into this method and getRawlines (but we can have update in between) will that affect us?? Do we need lock (and update metadata here)
-        // but we definitly need it for getRawLines.
+        // but we definitely need it for getRawLines.
 
         updateFolderMetadata();
 
@@ -531,10 +554,12 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         // the reload will replace the set values.  If the table has never been saved we keep the set values (we
         // do this for backward compatibility with TableManager, as it is probably more correct to use the default
         // values if the table has never been saved).
-        tagColumn = getConfigTableProperty(TableHeader.HEADER_SOURCE_COLUMN_KEY,  tagColumn);
+        sourceColumn = getConfigTableProperty(TableHeader.HEADER_SOURCE_COLUMN_KEY, sourceColumn);
         validateFiles =  Boolean.parseBoolean(getConfigTableProperty(TableHeader.HEADER_VALIDATE_FILES_KEY, Boolean.toString(validateFiles)));
         useHistory = Boolean.parseBoolean(getConfigTableProperty(TableHeader.HEADER_USE_HISTORY_KEY, Boolean.toString(useHistory)));
         hasUniqueTags = Boolean.parseBoolean(getConfigTableProperty(TableHeader.HEADER_UNIQUE_TAGS_KEY,  Boolean.toString(hasUniqueTags)));
+
+        bucketize = getBooleanConfigTableProperty(TableHeader.HEADER_BUCKETIZE_KEY, null);
     }
 
     /**
@@ -559,10 +584,14 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
     public void save() {
         initialize();
 
-        this.header.setProperty(TableHeader.HEADER_SOURCE_COLUMN_KEY, this.tagColumn);
+        this.header.setProperty(TableHeader.HEADER_SOURCE_COLUMN_KEY, this.sourceColumn);
         this.header.setProperty(TableHeader.HEADER_USE_HISTORY_KEY, Boolean.toString(this.useHistory));
         this.header.setProperty(TableHeader.HEADER_VALIDATE_FILES_KEY, Boolean.toString(this.validateFiles));
         this.header.setProperty(TableHeader.HEADER_UNIQUE_TAGS_KEY, Boolean.toString(this.hasUniqueTags));
+
+        if (bucketize != null) {
+            this.header.setProperty(TableHeader.HEADER_BUCKETIZE_KEY, Boolean.toString(this.bucketize));
+        }
 
         doSave();
         if (useHistory) {
@@ -573,7 +602,7 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
     protected abstract void doSave();
 
     /**
-     * Initalize the gor dictionary if it does not exists.
+     * Initialize the gor dictionary if it does not exists.
      */
     public void initialize() {
         log.trace("Initialize {}", getName());
@@ -604,7 +633,7 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
                 // Ignore, some one else created it.
                 log.trace("Table history directory {} already exists", this.historyDir);
             } catch (IOException e) {
-                throw new GorSystemException("Could not create table hostory directory: " + this.historyDir, e);
+                throw new GorSystemException("Could not create table history directory: " + this.historyDir, e);
             }
         }
 
@@ -612,7 +641,7 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
             // Create the header.
             this.header.setProperty(TableHeader.HEADER_FILE_FORMAT_KEY, "1.0");
             this.header.setProperty(TableHeader.HEADER_CREATED_KEY, new SimpleDateFormat("yyyy-MM-dd HH:mm").format(new Date()));
-            this.header.setTableColumns(new String[]{"File", "Alias", "ChrStart", "PosStart", "ChrStop", "PosStop", "Tags"});
+            this.header.setTableColumns(new String[]{"File", DEFAULT_SOURCE_COLUMN, "ChrStart", "PosStart", "ChrStop", "PosStop", "Tags"});
         }
     }
 
@@ -648,8 +677,12 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
      */
     private TableHeader parseHeaderFromLine(T line) {
         TableHeader newHeader = new TableHeader();
-        String args = line.getContentReal() + (securityContext != null ? " " + securityContext : "");
-        GorOptions gorOptions = GorOptions.createGorOptions(args);
+        List<String> args = new ArrayList<>();
+        args.add(line.getContentReal());
+        if (securityContext != null) {
+            args.addAll(Arrays.asList(CommandParseUtilities.quoteSafeSplit(securityContext, ' ')));
+        }
+        GorOptions gorOptions = GorOptions.createGorOptions(null, args.toArray(new String[0]));
         try(GenomicIterator source = gorOptions.getIterator()) {
             newHeader.setColumns(source.getHeader().split("\t"));
         }
@@ -674,19 +707,14 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
                             line.getContentRelative(), lineToUpdate.getBucket(), bucketLogical));
                 }
                 lineToUpdate.setBucket(bucketLogical);
-                if (useHistory) {
-                    tableLog.logAfter(TableLog.LogAction.ADDTOBUCKET, bucketLogical, line);
-                }
-
+                logAfter(TableLog.LogAction.ADDTOBUCKET, bucketLogical, line);
             } else {
                 // No line found, must have been deleted.  To be able to use the bucket we must add a new line.
                 T newDeletedLine = (T) TableEntry.copy(line);
                 newDeletedLine.setDeleted(true);
                 newDeletedLine.setBucket(bucketLogical);
                 tableEntries.insert(newDeletedLine, false);
-                if (useHistory) {
-                    tableLog.logAfter(TableLog.LogAction.INSERT, bucketLogical, line);
-                }
+                logAfter(TableLog.LogAction.INSERT, bucketLogical, line);
             }
         }
     }
@@ -729,10 +757,36 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         }
     }
 
+    public Boolean getBooleanConfigTableProperty(String key, Boolean def) {
+        String configValue = getConfigTableProperty(key, null);
+        return configValue != null ? Boolean.valueOf(configValue) : def;
+    }
+
+    public static boolean inferShouldBucketizeFromFile(String fileName) {
+        String type = FilenameUtils.getExtension(fileName);
+
+        if ("gor".equalsIgnoreCase(type) || "gorz".equalsIgnoreCase(type)) {
+            return true;
+        }
+        
+        if ("bam".equalsIgnoreCase(type) || "cram".equalsIgnoreCase(type)) {
+            return false;
+        }
+
+        return false;
+    }
+
+    // Util method.
+    protected void logAfter(TableLog.LogAction action, String argument, TableEntry entry) {
+        if (useHistory) {
+            tableLog.logAfter(action, argument, entry);
+        }
+    }
+
     protected abstract static class Builder<B extends Builder<B>> {
         protected Path path;
         protected Boolean useHistory;
-        protected String tagColumn;
+        protected String sourceColumn;
         protected String securityContext;
         protected Boolean validateFiles;
         protected Boolean uniqueTags;
@@ -746,8 +800,8 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
             return (B) this;
         }
 
-        public B tagColumn(String tagColumn) {
-            this.tagColumn = tagColumn;
+        public B sourceColumn(String sourceColumn) {
+            this.sourceColumn = sourceColumn;
             return self();
         }
 
@@ -791,17 +845,17 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
          * @return return new filter on files.
          */
         public TableFilter files(String... val) {
-            this.files = val != null ? Arrays.stream(val).map(f -> relativize(rootUri, f)).toArray(String[]::new) : null;
+            this.files = val != null ? Arrays.stream(val).map(f -> resolve(rootUri, f)).toArray(String[]::new) : null;
             return this;
         }
 
         /**
          * Filter for files names (content)
-         * @param val file names to filte by, absolute or relative to the table.
+         * @param val file names to filter by, absolute or relative to the table.
          * @return return new filter on files.
          */
         public TableFilter files(URI... val) {
-            this.files = val != null ? Arrays.stream(val).map(f -> relativize(rootUri, f.toString())).toArray(String[]::new) : null;
+            this.files = val != null ? Arrays.stream(val).map(f -> resolve(rootUri, f.toString())).toArray(String[]::new) : null;
             return this;
         }
 
@@ -817,12 +871,12 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
         }
 
         public TableFilter buckets(String... val) {
-            this.buckets = val != null ? Arrays.stream(val).map(b -> relativize(rootUri, b)).toArray(String[]::new) : null;
+            this.buckets = val != null ? Arrays.stream(val).map(b -> resolve(rootUri, b)).toArray(String[]::new) : null;
             return this;
         }
 
         public TableFilter buckets(Path... val) {
-            this.buckets = val != null ? Arrays.stream(val).map(b -> relativize(rootUri, b.toString())).toArray(String[]::new) : null;
+            this.buckets = val != null ? Arrays.stream(val).map(b -> resolve(rootUri, b.toString())).toArray(String[]::new) : null;
             return this;
         }
 
@@ -850,26 +904,45 @@ public abstract class BaseTable<T extends BucketableTableEntry> {
          * 2. If the filter contains buckets we also include deleted lines.
          *
          * @param l    line to match
-         * @return <true> if the line matches the filter otherwise <false>.
+         * @return {@code true} if the line matches the filter otherwise {@code false}.
          */
         protected boolean match(T l) {
-           return ((!l.isDeleted() || includeDeleted || buckets != null)
-                            && ((files == null && tags == null && buckets == null && chrRange == null)
-                            ||
-                            ((files == null || Stream.of(files).anyMatch(f -> f.equals(l.getContentRelative())))
-                                    && (tags == null || (l.getTags().length == 0 && tags.length == 0)
-                                        || (matchAllTags ? Stream.of(tags).allMatch(t -> ArrayUtils.contains(l.getTags(), t)) : Stream.of(tags).anyMatch(t -> ArrayUtils.contains(l.getTags(), t))))
-                                    && (buckets == null || (!l.hasBucket() && buckets.length == 0) ||
-                                        (l.hasBucket() && Stream.of(buckets).anyMatch(b -> b.equals(l.getBucket()))))
-                                    && (chrRange == null || (l.getRange() != null && chrRange.equals(l.getRange().format())))
-                            )
-                    )
-           );
+           return matchIncludeLine(l)
+                   && (matchIsNoFilter()
+                       || (matchFiles(l) && matchTags(l) && matchBuckets(l) && matchRange(l)));
+        }
+
+        private boolean matchIncludeLine(T l) {
+            return !l.isDeleted() || includeDeleted || buckets != null;
+        }
+
+        private boolean matchIsNoFilter() {
+            return files == null && tags == null && buckets == null && chrRange == null;
+        }
+
+        private boolean matchFiles(T l) {
+            return files == null || Stream.of(files).anyMatch(
+                    f -> f.equals(l.getContentReal())
+            );
+        }
+
+        private boolean matchBuckets(T l) {
+            return buckets == null || (!l.hasBucket() && buckets.length == 0) ||
+                    (l.hasBucket() && Stream.of(buckets).anyMatch(b -> b.equals(l.getBucketReal())));
+        }
+
+        private boolean matchTags(T l) {
+            return tags == null || (l.getTags().length == 0 && tags.length == 0)
+                    || (matchAllTags ? Stream.of(tags).allMatch(t -> ArrayUtils.contains(l.getTags(), t)) : Stream.of(tags).anyMatch(t -> ArrayUtils.contains(l.getTags(), t)));
+        }
+
+        private boolean matchRange(T l) {
+            return chrRange == null || (l.getRange() != null && chrRange.equals(l.getRange().format()));
         }
 
         public List<T> get() {
             log.debug("Selecting lines from dictionary {}", getName());
-            // Set intial candiates for search (this also forces load if not loaded and populates the tagHashToLines index)
+            // Set initial candidates for search (this also forces load if not loaded and populates the tagHashToLines index)
             List<T> lines2Search = getEntries(tags);
 
             return lines2Search.stream().filter(this::match)

@@ -8,9 +8,11 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 import org.apache.parquet.schema.Types;
-import org.gorpipe.model.genome.files.gor.Row;
+import org.gorpipe.gor.model.Row;
 
 import java.util.*;
+
+import static org.apache.parquet.schema.OriginalType.UTF8;
 
 /**
  * Translates a gor/nor row to corresponding format in a parquet file
@@ -42,7 +44,7 @@ public class GorParquetWriteSupport extends WriteSupport<Row> {
             } else if(typeName.equals("L")) {
                 types.add(Types.primitive(PrimitiveType.PrimitiveTypeName.INT64, Type.Repetition.REQUIRED).named(colName));
             } else {
-                types.add(Types.primitive(PrimitiveType.PrimitiveTypeName.BINARY, Type.Repetition.REQUIRED).named(colName));
+                types.add(Types.primitive(PrimitiveType.PrimitiveTypeName.BINARY, Type.Repetition.REQUIRED).as(UTF8).named(colName));
             }
         }
         if(nor) schemaSplit = Arrays.copyOfRange(schemaSplit,2,schemaSplit.length);
@@ -82,7 +84,7 @@ public class GorParquetWriteSupport extends WriteSupport<Row> {
                 Binary bin = Binary.fromCharSequence(row.colAsString(offset));
                 currentRecordConsumer.addBinary(bin);
             }
-            currentRecordConsumer.endField(types.get(i).getName(), 0);
+            currentRecordConsumer.endField(types.get(i).getName(), i);
         }
         currentRecordConsumer.endMessage();
     }
